@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Ignore secrets and service account files
+assets/keys/*.json
+functions/*.json

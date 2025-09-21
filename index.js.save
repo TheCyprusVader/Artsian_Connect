@@ -1,0 +1,72 @@
+const { setGlobalOptions } = require("firebase-functions");
+const { onRequest } = require("firebase-functions/https");
+const logger = require("firebase-functions/logger");
+
+const dialogflow = require("@google-cloud/dialogflow-cx");
+const path = require("path");
+
+// Limit concurrent containers
+setGlobalOptions({ maxInstances: 10 });
+
+// Path to service account JSON
+const keyFile = path.join(__dirname, "assets/keys/gen-ai-hackathon-3a0d4-e43a54436574.json");
+
+// Create a Dialogflow CX client
+const client = new dialogflow.SessionsClient({ keyFilename: keyFile });
+
+// Your agent details (replace with your values from GCP)
+const projectId = "gen-ai-hackathon-3a0d4";   // from JSON
+const location = "global";                   // or "us-central1" based on where you created agent
+const agentId = "YOUR_AGENT_ID";             // we’ll fetch from console
+const languageCode = "en";                   // or "en-US"
+
+exports.chatWithAgent = onRequest(async (req, res) => {
+  try {
+    const { message, sessionId } = req.body;
+
+    if (!message || !sessionId) {
+      return res.status(400).send({ error: "Missing message or sessionId" });
+    }
+
+    const sessionPath = client.projectLocationAgentSessionPath(
+      projectId,
+      location,
+      agentId,
+      sessionId
+    );
+
+    const request = {
+      session: sessionPath,
+      queryInput: {
+        text: {
+          text: message,
+        },
+        languageCode,
+      },
+    };
+
+    const [response] = await client.detectIntent(request);
+
+    const botReply =
+      response.queryResult.responseMessages
+        .map((m) => m.text?.text)
+        .flat()
+        .filter(Boolean)
+        .join(" ") || "No reply from agent.";
+
+    res.send({ reply: botReply });
+  } catch (err) {
+    logger.error("Dialogflow request failed", err);
+    res.status(500).send({ error: err.message });
+  }
+});
+
+// Keep a simple hello world function for testing
+exports.helloWorld = onRequest((req, res) => {
+  res.send("Hello from Firebase!");
+});
+
+
+
+
+

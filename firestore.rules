@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users can only read/write their own user document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Products: allow read to all, write only by logged-in users
+    match /products/{productId} {
+      allow read: if true; // anyone can view products
+      allow create: if request.auth != null; // must be logged in to add
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+    }
+  }
+}
+

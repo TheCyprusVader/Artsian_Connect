@@ -234,3 +234,130 @@ exports.saveData = functions.https.onCall(async(data, context) => {
   }
 });
 
+// ========================================
+// AI Product Listing Generator
+// Added by: TheCyprusVader
+// ========================================
+
+exports.generateProductListing = functions
+  .runWith({
+    timeoutSeconds: 120,
+    memory: '512MB'
+  })
+  .https.onCall(async (data, context) => {
+    try {
+      // Validate input
+      if (!data.imageUrls || data.imageUrls.length === 0) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'At least one image URL is required'
+        );
+      }
+
+      if (!data.price) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'Price is required'
+        );
+      }
+
+      const imageUrls = data.imageUrls;
+      const price = data.price;
+      const language = data.language || 'english';
+
+      // Download images from Firebase Storage
+      const imageParts = await Promise.all(
+        imageUrls.map(async (url) => {
+          const bucket = admin.storage().bucket();
+          const file = bucket.file(url.replace('gs://' + bucket.name + '/', ''));
+          const [buffer] = await file.download();
+          
+          return {
+            inlineData: {
+              data: buffer.toString('base64'),
+              mimeType: 'image/jpeg'
+            }
+          };
+        })
+      );
+
+      // Language configuration
+      const languageGuide = {
+        english: 'Write entirely in English. Keep it casual and friendly.',
+        hindi: 'Write entirely in Hindi (Devanagari script). Keep it casual.',
+        hinglish: 'Write in Hinglish (Hindi + English mix). Natural and casual.',
+        tamil: 'Write entirely in Tamil script. Keep it casual.',
+        bengali: 'Write entirely in Bengali script. Keep it casual.'
+      };
+
+      // Create prompt
+      const prompt = `You are helping an Indian artisan list their product online.
+
+**LANGUAGE:** ${languageGuide[language] || languageGuide.english}
+
+**TONE:** Casual, friendly, conversational.
+
+${imageUrls.length} image(s) provided.
+
+Create a simple product listing with ONLY these fields:
+
+{
+  "title": "Catchy, SEO-friendly title in ${language} (60-80 characters)",
+  "region": "Which part of India is this craft from? (Just state/region name)",
+  "description": "2-3 engaging sentences in ${language} (150 chars max)",
+  "features": [
+    "List 5-7 specific features in ${language}",
+    "Keep each point short and clear"
+  ]
+}
+
+Analyze the images and describe what you see. Focus on colors, patterns, materials, craftsmanship.
+
+**CRITICAL:** Return ONLY valid JSON with these 4 fields. No extra text.
+Price: ₹${price}`;
+
+      // Call Gemini API (using existing genAI instance)
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      
+      const result = await model.generateContent([
+        prompt,
+        ...imageParts
+      ]);
+
+      const response = await result.response;
+      let text = response.text();
+
+      // Clean and parse JSON
+      const startIdx = text.indexOf('{');
+      const endIdx = text.lastIndexOf('}');
+      
+      if (startIdx !== -1 && endIdx !== -1) {
+        text = text.substring(startIdx, endIdx + 1);
+      }
+
+      text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+      const listing = JSON.parse(text);
+
+      // Return result
+      return {
+        success: true,
+        data: {
+          title: listing.title || '',
+          region: listing.region || '',
+          description: listing.description || '',
+          features: listing.features || [],
+          price: `₹${price}`,
+          language: language
+        }
+      };
+
+    } catch (error) {
+      console.error('Error generating listing:', error);
+      
+      throw new functions.https.HttpsError(
+        'internal',
+        'Failed to generate listing: ' + error.message
+      );
+    }
+  });
